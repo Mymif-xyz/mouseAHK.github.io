@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Mouse AHK - v5.9 (updated)</title>
+<style>
+    :root { 
+        --primary: #3793ff; --bg: #121212; --card: #1e1e1e; 
+        --text: #e0e0e0; --border: #333; --input-bg: #2d2d2d; 
+    }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; margin: 24px; background: var(--bg); color: var(--text); line-height: 1.5; padding-bottom: 120px; }
+    .context { background: var(--card); border-radius: 12px; padding: 20px; margin-bottom: 24px; box-shadow: 0 8px 16px rgba(0,0,0,0.4); border: 1px solid var(--border); }
+    .header { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 12px; }
+    .tag-container { display: flex; gap: 8px; flex-wrap: wrap; }
+    .tag { background: #1a3a5a; color: var(--primary); padding: 4px 12px; border-radius: 16px; font-size: 0.85rem; display: flex; align-items: center; gap: 8px; border: 1px solid var(--primary); }
+    .tag.desktop { background: #2e7d32; color: #dff0d8; border-color: #2e7d32; }
+    table { width: 100%; border-collapse: collapse; }
+    th { text-align: left; font-size: 0.75rem; color: #888; padding: 8px; }
+    td { padding: 8px; vertical-align: top; border-bottom: 1px solid var(--border); }
+    button { padding: 5px 12px; border-radius: 6px; border: 1px solid var(--border); background: #333; color: white; cursor: pointer; transition: 0.1s; }
+    button:hover { background: #444; }
+    .btn-main { background: var(--primary); color: white; border: none; font-weight: 600; padding: 8px 16px; }
+    .btn-add { color: var(--primary); border-color: var(--primary); background: transparent; margin-top: 5px; font-size: 0.75rem; }
+    select, input { padding: 6px; border-radius: 6px; border: 1px solid var(--border); background: var(--input-bg); color: white; }
+    .rec-input { width: 90px; font-weight: bold; color: #ff5252; text-align: center; }
+    .mod-pill { margin: 2px; font-size: 0.8rem; border: 1px solid #444; opacity: 0.6; }
+    .mod-pill.active { opacity: 1; border-color: var(--primary); background: #1a3a5a; color: var(--primary); font-weight: bold; }
+    .builder-container { background: #161616; padding: 8px; border-radius: 8px; margin-top: 5px; border-left: 3px solid var(--primary); }
+    .builder-step { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+    .gesture-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; background: #181818; padding: 12px; border-radius: 8px; border: 1px solid var(--border); }
+    .toolbar { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: #252525; padding: 12px 24px; border-radius: 50px; display: flex; gap: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.5); z-index: 100; border: 1px solid #444; }
+    .app-input { display: inline-flex; gap: 6px; align-items: center; }
+    .app-input input { min-width: 200px; }
+    .small-muted { font-size: 0.8rem; color: #9aa; margin-left: 8px; }
+</style>
+</head>
+<body>
+<h1>Mouse AHK Configurator <small style="font-size: 0.5em; color: #666;">v5.8</small></h1>
+
+<div id="contexts-container"></div>
+
+<div class="toolbar">
+    <button class="btn-main" onclick="addContext(false)">+ App Context</button>
+    <button onclick="addContext(true)">🌍 Global Context</button>
+    <button onclick="addContext(false, null, true)">🖥️ Desktop Context</button>
+    <button class="btn-main" style="background:#2e7d32" onclick="exportAHK()">💾 Export .ahk</button>
+    <button onclick="document.getElementById('fileInput').click()">📂 Load .ahk</button>
+    <input type="file" id="fileInput" hidden accept=".ahk" onchange="handleImport(this)">
+</div>
+
+<script>
+/* ---------------------------
+   CONFIG
+   --------------------------- */
+const CONFIG = {
+    inputs: ["Back", "Forward", "Middle", "WheelUp", "WheelDown", "WheelLeft", "WheelRight", "Custom"], // removed Back+Forward
+    modifiers: ["Ctrl", "Alt", "Shift", "Win", "Middle Held"],
+    actions: ["None", "Shortcut", "Macro", "Copy", "Paste", "Cut", "Undo", "Redo", "VolUp", "VolDown", "Mute"],
+    ahkMap: { "Copy": "^c", "Paste": "^v", "Cut": "^x", "Undo": "^z", "Redo": "^y", "VolUp": "{Volume_Up}", "VolDown": "{Volume_Down}", "Mute": "{Volume_Mute}" },
+    mouseMap: { "Back": "XButton1", "Forward": "XButton2", "Middle": "MButton" }, // removed Back+Forward
+    modSymbols: { "Ctrl": "^", "Alt": "!", "Shift": "+", "Win": "#" },
+    keyMap: { "ArrowLeft": "Left", "ArrowRight": "Right", "ArrowUp": "Up", "ArrowDown": "Down", "Control": "Ctrl", "Meta": "Win", "Escape": "Esc", " ": "Space" }
+};
+
+const container = document.getElementById('contexts-container');
+
+/* ---------------------------
+   Helper UI builders
+   --------------------------- */
+function createRecorder(val = "") {
+    const wrap = document.createElement('div'); wrap.className = 'rec-box';
+    const i = document.createElement('input'); i.className = 'rec-input'; i.value = val;
+    i.oninput = save;
+    const btnRec = document.createElement('button'); btnRec.textContent = "⏺";
+    btnRec.onclick = () => {
+        i.value = "...";
+        const handler = (e) => {
+            e.preventDefault();
+            let k = CONFIG.keyMap[e.key] || e.key;
+            i.value = k; window.removeEventListener('keydown', handler); save();
+        };
+        window.addEventListener('keydown', handler);
+    };
+    wrap.append(i, btnRec); return { wrap, input: i };
+}
+
+function createModifierUI(savedMods = []) {
+    const wrap = document.createElement('div');
+    CONFIG.modifiers.forEach(m => {
+        const btnMod = document.createElement('button');
+        btnMod.className = "mod-pill" + (savedMods.includes(m) ? " active" : "");
+        btnMod.textContent = m;
+        btnMod.onclick = () => { btnMod.classList.toggle('active'); save(); };
+        wrap.appendChild(btnMod);
+    });
+    return wrap;
+}
+
+function createActionInterface(data = null) {
+    const mainWrap = document.createElement('div');
+    const typeSel = createSelect(CONFIG.actions, data?.type || "None");
+    const uiBox = document.createElement('div');
+    const renderUI = () => {
+        uiBox.innerHTML = "";
+        if (typeSel.value === "Shortcut" || typeSel.value === "Macro") {
+            const bWrap = document.createElement('div'); bWrap.className = 'builder-container';
+            const sList = document.createElement('div');
+            const addS = (sd = null) => {
+                const step = document.createElement('div'); step.className = 'builder-step';
+                const rec = createRecorder(sd?.key || ""); step.append(rec.wrap);
+                if (typeSel.value === "Macro") {
+                    const d = document.createElement('input'); d.type="number"; d.style.width="55px";
+                    d.value = sd?.delay || "50"; d.oninput = save;
+                    step.append(document.createTextNode("wait"), d, document.createTextNode("ms"));
+                }
+                const rem = document.createElement('button'); rem.textContent = "×";
+                rem.onclick = () => { step.remove(); save(); };
+                step.append(rem); sList.appendChild(step);
+            };
+            const bAdd = document.createElement('button'); bAdd.className="btn-add";
+            bAdd.textContent = typeSel.value === "Shortcut" ? "+ Key" : "+ Step";
+            bAdd.onclick = () => { addS(); save(); };
+            bWrap.append(sList, bAdd); uiBox.appendChild(bWrap);
+            if(data?.steps) data.steps.forEach(s => addS(s)); else addS();
+        }
+    };
+    typeSel.onchange = () => { renderUI(); save(); };
+    mainWrap.append(typeSel, uiBox); renderUI(); return mainWrap;
+}
+
+/* ---------------------------
+   Contexts / Rows
+   --------------------------- */
+function addContext(isGlobal, data = null, isDesktop = false) {
+    // mutual exclusion: can't add Desktop if global exists and vice versa
+    if (isGlobal && [...document.querySelectorAll('.context')].some(c => c.dataset.desktop === "true")) {
+        alert("Cannot add a Global context while a Desktop-only context exists.");
+        return;
+    }
+    if (isDesktop && [...document.querySelectorAll('.context')].some(c => c.dataset.global === "true")) {
+        alert("Cannot add a Desktop-only context while a Global context exists.");
+        return;
+    }
+    // also prevent multiple desktop contexts
+    if (isDesktop && [...document.querySelectorAll('.context')].some(c => c.dataset.desktop === "true")) {
+        alert("A Desktop-only context already exists.");
+        return;
+    }
+
+    const ctx = document.createElement('div'); ctx.className = 'context';
+    ctx.dataset.global = !!isGlobal;
+    ctx.dataset.desktop = !!isDesktop;
+
+    const header = document.createElement('div'); header.className = 'header';
+    const tBox = document.createElement('div'); tBox.className = 'tag-container';
+
+    if (!isGlobal && !isDesktop) {
+        // Replace "+ Add App" with an inline app input + Add button + datalist
+        const wrap = document.createElement('div'); wrap.className = 'app-input';
+        const inp = document.createElement('input');
+        inp.placeholder = "Add app (exe name)";
+        inp.setAttribute('list', 'commonApps');
+        inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); addApp(); } };
+        const dl = document.createElement('datalist'); dl.id = 'commonApps';
+        const common = [
+            'chrome.exe','firefox.exe','msedge.exe','explorer.exe','iexplore.exe','brave.exe',
+'opera.exe','vivaldi.exe','code.exe','notepad.exe','notepad++.exe','calc.exe',
+'mspaint.exe','taskmgr.exe','control.exe','cmd.exe','powershell.exe',
+
+'discord.exe','steam.exe','steamwebhelper.exe','battle.net.exe','epicgameslauncher.exe',
+'origin.exe','uplay.exe','riotclientservices.exe',
+
+'Overwatch.exe','Overwatch2.exe','Minecraft.exe','MinecraftLauncher.exe',
+'csgo.exe','dota2.exe','valorant.exe','LeagueClient.exe','RocketLeague.exe',
+'apex.exe','FortniteClient-Win64-Shipping.exe',
+
+'spotify.exe','vlc.exe','obs64.exe','audacity.exe','handbrake.exe','blender.exe',
+'gimp-2.10.exe','7zFM.exe','winrar.exe',
+
+'winword.exe','excel.exe','powerpnt.exe','outlook.exe','onenote.exe','teams.exe',
+'skype.exe','zoom.exe','slack.exe',
+
+'photoshop.exe','illustrator.exe','aftereffects.exe','premierepro.exe',
+
+'putty.exe','filezilla.exe','winscp.exe','teamviewer.exe','anydesk.exe',
+
+'telegram.exe','whatsapp.exe','signal.exe',
+
+'nvidiaexperience.exe','msiafterburner.exe','cpuz.exe','hwinfo64.exe'
+
+        ];
+        common.forEach(a => { const op = document.createElement('option'); op.value = a; dl.appendChild(op); });
+        const addBtn = document.createElement('button'); addBtn.textContent = "Add"; addBtn.onclick = addApp;
+        const hint = document.createElement('span'); 
+        wrap.append(inp, dl, addBtn, hint);
+        header.appendChild(wrap);
+
+        function addApp() {
+            const n = inp.value && inp.value.trim();
+            if (!n) return;
+            renderTag(n, tBox);
+            inp.value = "";
+        }
+    } else if (isDesktop) {
+        tBox.innerHTML = `<span class="tag desktop">DESKTOP ONLY</span>`;
+    } else {
+        tBox.innerHTML = `<span class="tag global">GLOBAL FALLBACK</span>`;
+    }
+
+    const dBtn = btn("Delete Context", () => { if(confirm("Delete?")) {ctx.remove(); save();} });
+    dBtn.style.marginLeft="auto";
+    header.append(tBox, dBtn);
+
+    const tbl = document.createElement('table');
+    tbl.innerHTML = `<thead><tr><th style="width:20%">Trigger</th><th style="width:25%">Modifiers</th><th style="width:5%">Gest</th><th>Action</th><th style="width:5%"></th></tr></thead><tbody></tbody>`;
+    ctx.append(header, tbl, btn("+ Add Row", () => addRow(tbl.querySelector('tbody'))));
+    container.appendChild(ctx);
+
+    if (data) {
+        // restore tags, rows, and desktop flag
+        if (data.progs?.length) data.progs.forEach(p => renderTag(p, tBox));
+        data.rows?.forEach(r => addRow(tbl.querySelector('tbody'), r));
+    }
+    save();
+}
+
+function addRow(tbody, data = null) {
+    const tr = document.createElement('tr');
+    const recIn = createRecorder(data?.customIn || "");
+    const selIn = createSelect(CONFIG.inputs, data?.input);
+    recIn.wrap.style.display = data?.input === "Custom" ? "flex" : "none";
+    selIn.onchange = () => { recIn.wrap.style.display = selIn.value === "Custom" ? "flex" : "none"; save(); };
+    const modUI = createModifierUI(data?.mods || []);
+    const selGest = createSelect(["No", "Yes"], data?.isGest);
+    const mainAct = createActionInterface(data?.mainAction);
+    const gGrid = document.createElement('div'); gGrid.className = 'gesture-grid';
+    gGrid.style.display = data?.isGest === "Yes" ? 'grid' : 'none';
+    ["Up", "Down", "Left", "Right"].forEach(d => {
+        const w = document.createElement('div'); w.innerHTML = `<small><b>${d}</b></small>`;
+        w.appendChild(createActionInterface(data?.gestures?.[d])); gGrid.appendChild(w);
+    });
+    selGest.onchange = () => {
+        gGrid.style.display = selGest.value === "Yes" ? 'grid' : 'none';
+        mainAct.style.display = selGest.value === "Yes" ? 'none' : 'block';
+        save();
+    };
+    const tTd = document.createElement('td'); tTd.append(selIn, recIn.wrap);
+    const aTd = document.createElement('td'); aTd.append(mainAct, gGrid);
+    tr.append(tTd, td(modUI), td(selGest), aTd, td(btn("×", () => {tr.remove(); save();})));
+    tbody.appendChild(tr);
+    save();
+}
+
+/* ---------------------------
+   State save/load
+   --------------------------- */
+function save() {
+    const state = [...document.querySelectorAll('.context')].map(ctx => ({
+        isGlobal: ctx.dataset.global === "true",
+        isDesktop: ctx.dataset.desktop === "true",
+        progs: [...ctx.querySelectorAll('.tag span')].map(s => s.textContent),
+        rows: [...ctx.querySelectorAll('tbody tr')].map(tr => ({
+            input: tr.querySelector('td:nth-child(1) select').value,
+            customIn: tr.querySelector('td:nth-child(1) .rec-input').value,
+            mods: [...tr.querySelectorAll('.mod-pill.active')].map(b => b.textContent),
+            isGest: tr.querySelector('td:nth-child(3) select').value,
+            mainAction: getActionState(tr.querySelector('td:nth-child(4) > div:first-child')),
+            gestures: Object.fromEntries(["Up","Down","Left","Right"].map((d, i) => [d, getActionState(tr.querySelectorAll('.gesture-grid > div')[i])]))
+        }))
+    }));
+    localStorage.setItem('ahk_mouse_v5_8', JSON.stringify(state));
+    return state;
+}
+
+function getActionState(el) {
+    const type = el.querySelector('select').value;
+    const steps = [...el.querySelectorAll('.builder-step')].map(s => ({
+        key: s.querySelector('input.rec-input').value,
+        delay: s.querySelector('input[type="number"]')?.value || "0"
+    }));
+    return { type, steps };
+}
+
+/* ---------------------------
+   Exporter (AHK v2)
+   - important: behavior rules implemented here:
+   * Back/Forward tilde only if there is NO middle-layer mapping (to avoid native click leakage)
+   * Gesture TAP: if small movement -> **chord detection** (if applicable) then pass-through/native as appropriate
+   * Gesture (large movement): only send mapped gesture action, suppress native click
+   * Middle-layer: if mapped -> run and Return (suppress base)
+   --------------------------- */
+function exportAHK() {
+    const state = save();
+
+    let ahk = `#Requires AutoHotkey v2.0
+#SingleInstance Force
+CoordMode("Mouse","Screen")
+A_MaxHotkeysPerInterval := 1000
+gestureThreshold := 40
+
+`;
+
+    const tokenFor = (k) => {
+        const low = (k || "").toLowerCase();
+        if (low === "win") return "#";
+        if (low === "ctrl") return "^";
+        if (low === "alt") return "!";
+        if (low === "shift") return "+";
+        return k && k.length === 1 ? k : `{${k}}`;
+    };
+
+    const buildActionLines = (act) => {
+        if (!act || act.type === "None") return "";
+        if (act.type === "Shortcut") {
+            let combo = "";
+            let hasWin = false;
+            act.steps.forEach(s => {
+                const t = tokenFor(s.key);
+                if (t === "#") hasWin = true;
+                combo += t;
+            });
+            return `Send("${hasWin ? "{Blind}" : ""}${combo}")`;
+        }
+        if (act.type === "Macro") {
+            return act.steps.map(s => `Send("{${s.key}}")\n  Sleep(${s.delay})`).join("\n  ");
+        }
+        if (act.type === "VolUp") return `Send("{Volume_Up}")`;
+        if (act.type === "VolDown") return `Send("{Volume_Down}")`;
+        if (act.type === "Mute") return `Send("{Volume_Mute}")`;
+        if (act.type === "Copy") return `Send("{Blind}^c")`;
+        if (act.type === "Paste") return `Send("{Blind}^v")`;
+        if (act.type === "Cut") return `Send("{Blind}^x")`;
+        if (act.type === "Undo") return `Send("{Blind}^z")`;
+        if (act.type === "Redo") return `Send("{Blind}^y")`;
+        if (CONFIG.ahkMap[act.type]) return `Send("${CONFIG.ahkMap[act.type]}")`;
+        return "";
+    };
+
+    // buildGestureBlockForRow now receives needsTilde and composite info
+    const buildGestureBlockForRow = (hkKey, row, needsTilde = false, composite = null) => {
+        // if no gesture configured: we treat as "no gesture" and handle tap fallthrough outside
+        if (row.isGest === "No") {
+            const actionLine = buildActionLines(row.mainAction);
+            if (!actionLine) return `  ; no action defined\n`;
+            return `  ${actionLine}\n`;
+        }
+
+        // Gesture path
+        let block = `
+  MouseGetPos(&sx, &sy)
+  KeyWait("${hkKey}")
+  MouseGetPos(&ex, &ey)
+  dx := ex - sx, dy := ey - sy
+  if (Abs(dx) < gestureThreshold && Abs(dy) < gestureThreshold) {
+    ; small movement -> TAP - check composite (if any), otherwise pass native (or do nothing if passthrough)
+`;
+        if (composite && composite.actionLine) {
+            // If composite (like Back+Forward previously) existed, detect here
+            block += `    KeyWait("${composite.other}", "DT0.08")\n    if (GetKeyState("${composite.other}", "P")) {\n      ${composite.actionLine}\n      Return\n    }\n`;
+        }
+        // If handler is tilde (OS already sends native), do nothing and just return.
+        if (needsTilde) {
+            block += `    Return\n  }\n`;
+        } else {
+            // we must send native ourselves
+            block += `    Send("{${hkKey}}")\n    Return\n  }\n`;
+        }
+
+        block += `
+  ; movement -> gesture direction
+  dir := (Abs(dx) > Abs(dy)) ? (dx > 0 ? "Right" : "Left") : (dy > 0 ? "Down" : "Up")
+`;
+        ["Up", "Down", "Left", "Right"].forEach(d => {
+            const act = row.gestures?.[d];
+            const actLines = buildActionLines(act);
+            if (actLines) {
+                block += `  if (dir = "${d}") {\n    ${actLines}\n    Return\n  }\n`;
+            }
+        });
+
+        // If gesture direction didn't match any mapped action, fallback: do not send native (gesture intended) — so just Return
+        block += `  Return\n`;
+
+        return block;
+    };
+
+    // produce AHK for each context
+    state.forEach(ctx => {
+        // build scope expression
+        let scopeExpr = "";
+        if (ctx.isDesktop) {
+            // desktop active when Progman or WorkerW is active (desktop background windows)
+            scopeExpr = `WinActive("ahk_class Progman") || WinActive("ahk_class WorkerW")`;
+        } else if (!ctx.isGlobal) {
+            scopeExpr = (ctx.progs || []).map(p => `WinActive("ahk_exe ${p}")`).join(" || ");
+        } // global -> scopeExpr stays empty => global block
+        // build map keyed by mods+raw
+        const mapByKey = {};
+        (ctx.rows || []).forEach(r => {
+            const raw = r.input === "Custom" ? r.customIn : (CONFIG.mouseMap[r.input] || r.input);
+            if (!raw) return;
+            // ignore legacy composite triggers using '&' (Back+Forward removed)
+            if (raw.includes("&")) return;
+            const baseMods = (r.mods || []).filter(m => m !== "Middle Held").map(m => CONFIG.modSymbols[m]).join("");
+            const keyName = baseMods + raw;
+            if (!mapByKey[keyName]) mapByKey[keyName] = { keyName, raw, keyNameBaseMods: baseMods };
+            if ((r.mods || []).includes("Middle Held")) mapByKey[keyName].mid = r;
+            else mapByKey[keyName].base = r;
+        });
+
+        ahk += scopeExpr ? `#HotIf ${scopeExpr}\n` : "#HotIf\n";
+
+        Object.values(mapByKey).forEach(entry => {
+            const hk = entry.keyName;
+
+            // handle MButton specially — its own handler must not check GetKeyState inside
+            if (entry.raw === "MButton") {
+                ahk += `MButton:: {\n`;
+                // Middle-held mapping for MButton itself is unusual; prioritize base gestures/tap
+                if (entry.base) {
+                    const baseBlock = buildGestureBlockForRow(entry.raw, entry.base, false, null);
+                    ahk += baseBlock.split("\n").map(l => l ? "  " + l : l).join("\n") + "\n";
+                } else {
+                    ahk += `  ; No mapping for middle button — pass native\n  Send("{MButton}")\n`;
+                }
+                ahk += `}\n\n`;
+                return;
+            }
+
+            // decide if we should emit tilde (pass-through) for back/forward: only when there is NO middle-layer mapping
+            const wantsTildeForBtns = (entry.raw === "XButton1" || entry.raw === "XButton2");
+            const needsTilde = wantsTildeForBtns && !entry.mid;
+
+            // Build handler header (tilde included conditionally)
+            ahk += `${needsTilde ? "~" : ""}${hk}:: {\n`;
+
+            // Composite chord detection removed from top-level — handled inside gesture TAP branch via buildGestureBlockForRow
+
+            // Middle-layer check: if middle-layer mapping exists, run it and Return (suppress base)
+            if (entry.mid) {
+                // if mid is simple (no gesture)
+                if (entry.mid.isGest === "No") {
+                    const midLine = buildActionLines(entry.mid.mainAction);
+                    if (midLine) {
+                        ahk += `  if (GetKeyState("MButton", "P")) {\n    ${midLine}\n    Return\n  }\n\n`;
+                    } else {
+                        // if no midLine defined, still block base if middle held to avoid leakage
+                        ahk += `  if (GetKeyState("MButton", "P")) {\n    Return\n  }\n\n`;
+                    }
+                } else {
+                    // mid has gestures: run the mid gesture logic if middle held
+                    ahk += `  if (GetKeyState("MButton", "P")) {\n`;
+                    const midBlock = buildGestureBlockForRow(entry.raw, entry.mid, needsTilde, null);
+                    // indent block lines
+                    ahk += midBlock.split("\n").map(l => l ? "  " + l : l).join("\n") + "\n    Return\n  }\n\n";
+                }
+            }
+
+            // Base branch: emit gesture handling or mainAction
+            if (entry.base) {
+                const baseBlock = buildGestureBlockForRow(entry.raw, entry.base, needsTilde, null);
+                ahk += baseBlock.split("\n").map(l => l ? "  " + l : l).join("\n") + "\n";
+            } else {
+                // if no base mapping, pass through native only when tilde is true (otherwise send native ourselves)
+                if (needsTilde) {
+                    // tilde already passes native; nothing to do
+                    ahk += `  ; No base mapping: pass native (tilde)\n`;
+                } else {
+                    ahk += `  ; No base mapping: send native\n  Send("{${entry.raw}}")\n`;
+                }
+            }
+
+            ahk += `}\n\n`;
+        });
+
+        ahk += "#HotIf\n\n";
+    });
+
+    // append config data for import (last line)
+    ahk += `; CONFIG_DATA: ${JSON.stringify(state)}`;
+
+    // download
+    const blob = new Blob([ahk], { type: 'text/plain' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = "mouse_v5.ahk";
+    a.click();
+}
+
+/* ---------------------------
+   Import / UI helpers
+   --------------------------- */
+function handleImport(inp) {
+    const r = new FileReader();
+    r.onload = () => {
+        const m = r.result.match(/; CONFIG_DATA: (.*)/);
+        if (m) {
+            container.innerHTML = "";
+            try {
+                JSON.parse(m[1]).forEach(c => addContext(c.isGlobal, c, c.isDesktop));
+                save();
+            } catch (e) {
+                alert("Failed to parse config data.");
+            }
+        } else {
+            alert("No CONFIG_DATA found in file.");
+        }
+    };
+    r.readAsText(inp.files[0]);
+}
+
+function renderTag(n, b) {
+    const s = document.createElement('div'); s.className = 'tag';
+    s.innerHTML = `<span>${n}</span>`;
+    const d = document.createElement('b'); d.innerHTML = ' &times;'; d.onclick = () => { s.remove(); save(); };
+    s.append(d); b.append(s); save();
+}
+
+function createSelect(opts, sel) {
+    const s = document.createElement('select');
+    opts.forEach(o => { const op = document.createElement('option'); op.value = op.text = o; if(o === sel) op.selected = true; s.add(op); });
+    return s;
+}
+
+function btn(t, f) { const b = document.createElement('button'); b.textContent = t; b.onclick = f; return b; }
+function td(e) { const c = document.createElement('td'); c.append(e); return c; }
+
+window.onload = () => {
+    const s = localStorage.getItem('ahk_mouse_v5_8');
+    if (s) JSON.parse(s).forEach(c => addContext(c.isGlobal, c, c.isDesktop));
+};
+</script>
+</body>
+</html>
